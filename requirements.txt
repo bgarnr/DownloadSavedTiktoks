@@ -1,7 +1,10 @@
-selenium==4.15.2
-undetected-chromedriver==3.5.4
 undetected-chromedriver==3.5.4
 selenium==4.15.2
 requests==2.31.0
-pyairtable==2.2.0
+python-dotenv==1.0.0
 fake-useragent==1.4.0
+pyairtable==2.2.0
+watchdog==3.0.0
+google-api-python-client==2.108.0
+google-auth-httplib2==0.1.1
+google-auth-oauthlib==1.1.0

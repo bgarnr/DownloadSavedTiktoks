@@ -20,17 +20,25 @@ var/
 .installed.cfg
 *.egg
 
+# Environment variables
+.env
+credentials.json
+token.pickle
+
 # Virtual Environment
 venv/
 ENV/
-
-# Environment variables
-.env
+.venv/
 
 # IDE
 .idea/
 .vscode/
 
 # Chrome Driver
-*.log
 chromedriver.exe
+*.log
+
+# Downloaded videos
+*.mp4
+*.crdownload
+*.tmp

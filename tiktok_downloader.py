@@ -11,6 +11,45 @@ import sys
 import setup_chromedriver
 from selenium.webdriver.common.keys import Keys
 from pyairtable import Table
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+import mimetypes
+import http.server
+import socketserver
+import threading
+import requests
+from urllib.parse import quote
+from drive_manager import DriveManager
+
+class DownloadHandler(FileSystemEventHandler):
+    def __init__(self, airtable_manager, video_id):
+        self.airtable_manager = airtable_manager
+        self.video_id = video_id
+        self.found_file = None
+        print(f"\nFile monitoring initialized for video {video_id}")
+        
+    def on_created(self, event):
+        print(f"\nFile created event detected!")
+        print(f"Path: {event.src_path}")
+        print(f"Is directory: {event.is_directory}")
+        if not event.is_directory:
+            print(f"File extension: {os.path.splitext(event.src_path)[1]}")
+            
+    def on_moved(self, event):
+        print(f"\nFile moved/renamed event detected!")
+        print(f"Source path: {event.src_path}")
+        print(f"Destination path: {event.dest_path}")
+        
+        if not event.is_directory and event.dest_path.endswith('.mp4'):
+            print(f"\nNew video file detected: {event.dest_path}")
+            self.found_file = event.dest_path
+            # Wait a moment for the file to be fully written
+            time.sleep(2)
+
+class SimpleHTTPRequestHandlerWithCORS(http.server.SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        super().end_headers()
 
 class AirtableManager:
     def __init__(self):
@@ -18,6 +57,9 @@ class AirtableManager:
         self.base_id = os.getenv("AIRTABLE_BASE_ID")
         self.token = os.getenv("AIRTABLE_ACCESS_TOKEN_VALUE")
         self.table_name = os.getenv("AIRTABLE_TABLE_NAME")
+        self.http_server = None
+        self.server_thread = None
+        self.drive_manager = DriveManager()
         
         print(f"\nInitializing Airtable connection...")
         print(f"Base ID: {self.base_id}")
@@ -33,28 +75,106 @@ class AirtableManager:
             print("Successfully connected to Airtable!")
         except Exception as e:
             print(f"Error connecting to Airtable: {str(e)}")
-    
-    def create_record(self, video_id, description, uploader, status="Downloaded"):
+
+    def start_temp_server(self, file_path):
+        """Start a temporary HTTP server to serve the file"""
+        # Find an available port
+        with socketserver.TCPServer(("", 0), None) as s:
+            port = s.server_address[1]
+
+        # Set the server's directory to the file's directory
+        os.chdir(os.path.dirname(os.path.abspath(file_path)))
+        
+        # Create and start the server
+        handler = SimpleHTTPRequestHandlerWithCORS
+        self.http_server = socketserver.TCPServer(("", port), handler)
+        
+        self.server_thread = threading.Thread(target=self.http_server.serve_forever)
+        self.server_thread.daemon = True
+        self.server_thread.start()
+        
+        return f"http://localhost:{port}/{quote(os.path.basename(file_path))}"
+
+    def stop_temp_server(self):
+        """Stop the temporary HTTP server"""
+        if self.http_server:
+            self.http_server.shutdown()
+            self.http_server.server_close()
+            self.server_thread.join()
+            self.http_server = None
+            self.server_thread = None
+
+    def create_record(self, video_id, description, uploader, status="Downloaded", video_file=None):
         """Create a record in Airtable for a downloaded video"""
         try:
             print(f"\nCreating Airtable record...")
             print(f"Video ID: {video_id}")
             print(f"Uploader: {uploader}")
-            print(f"Description length: {len(description)} chars")
+            print(f"Description: {description if description else 'No description available'}")
             print(f"Status: {status}")
             
-            record = self.table.create({
+            record_data = {
                 "Video Id": video_id,
-                "Description": description,
+                "Description": description if description else "No description available",
                 "Uploader": uploader,
                 "Status": status
-            })
-            print(f"Successfully created Airtable record for video {video_id}")
+            }
+            
+            # If we have a video file, prepare it for upload
+            if video_file and os.path.exists(video_file):
+                print(f"Uploading video file: {video_file}")
+                file_size = os.path.getsize(video_file)
+                print(f"File size: {file_size} bytes")
+                
+                if file_size < 1000:  # Less than 1KB
+                    raise Exception(f"File seems too small ({file_size} bytes), might be corrupted or not fully downloaded")
+                
+                try:
+                    # Upload to Google Drive first
+                    print("Uploading to Google Drive...")
+                    shareable_link = self.drive_manager.upload_file(video_file)
+                    
+                    if shareable_link:
+                        print(f"File uploaded to Drive: {shareable_link}")
+                        record_data["Video File"] = [{"url": shareable_link}]
+                    else:
+                        print("Failed to upload to Google Drive")
+
+                except Exception as e:
+                    raise e
+            
+            # Create the record with all data
+            record = self.table.create(record_data)
+            print("Successfully created Airtable record with all data")
             return record
+            
         except Exception as e:
             print(f"Error creating Airtable record: {str(e)}")
             print(f"Full error details: {repr(e)}")
             return None
+
+    def update_record_with_file(self, record_id, video_file):
+        """Update an existing record with a video file"""
+        try:
+            print(f"\nUpdating record with video file...")
+            # Upload to Google Drive first
+            print("Uploading to Google Drive...")
+            shareable_link = self.drive_manager.upload_file(video_file)
+            
+            if shareable_link:
+                print(f"File uploaded to Drive: {shareable_link}")
+                self.table.update(record_id, {
+                    "Video File": [{"url": shareable_link}]
+                })
+                print("Successfully updated record with video file")
+                return True
+            else:
+                print("Failed to upload to Google Drive")
+                return False
+            
+        except Exception as e:
+            print(f"Error updating record with video file: {str(e)}")
+            return False
 
 class TikTokDownloader:
     def __init__(self, profile_name=None):
@@ -62,6 +182,8 @@ class TikTokDownloader:
         self.profile_name = profile_name
         self.driver = None
         self.airtable = AirtableManager()
+        self.download_dir = os.getenv("DOWNLOAD_DIR")
+        print(f"Using download directory: {self.download_dir}")
         self.setup_driver()
         
     def setup_driver(self):
@@ -247,19 +369,44 @@ class TikTokDownloader:
                             print(f"Error extracting video info: {str(e)}")
                         
                         # Get video description if available
+                        print("Attempting to get video description...")
                         try:
-                            print("Attempting to get video description...")
-                            description = self.driver.find_element(By.CSS_SELECTOR, ".css-j2a19r-SpanText").text
-                            print(f"Found description: {description[:100]}...")
+                            # Wait for the content to load
+                            print("Waiting for content to load...")
+                            time.sleep(3)  # Give the page time to load
+                            
+                            # Try to find the description span
+                            print("Looking for description span...")
+                            desc_span = self.driver.find_element(By.CSS_SELECTOR, "span.css-j2a19r-SpanText")
+                            description = desc_span.text.strip()
+                            
+                            if description:
+                                print(f"Description found: {description[:50]}...")
+                            else:
+                                print("No description found in span")
+                                description = None
+                                
                         except Exception as e:
                             print(f"Error getting description: {str(e)}")
-                            description = "No description available"
+                            print("Page source around description:")
+                            try:
+                                body = self.driver.find_element(By.TAG_NAME, "body")
+                                print(body.get_attribute('innerHTML')[:1000])
+                            except:
+                                print("Could not get page source")
+                            description = None
                         
                         print("\nStarting download process...")
                         # Switch to the new tab
                         self.driver.switch_to.window(self.driver.window_handles[-1])
                         
                         try:
+                            # Set up file monitoring before starting download
+                            download_handler = DownloadHandler(self.airtable, video_id)
+                            observer = Observer()
+                            observer.schedule(download_handler, self.download_dir, recursive=False)
+                            observer.start()
+                            
                             # Wait for video element to be present
                             print("Waiting for video element...")
                             video = WebDriverWait(self.driver, 10).until(
@@ -277,31 +424,79 @@ class TikTokDownloader:
                             
                             # Click the Download video option
                             print("Looking for Download option...")
-                            download_option = WebDriverWait(self.driver, 5).until(
-                                EC.element_to_be_clickable((By.CSS_SELECTOR, "span.css-108oj9l-SpanItemText"))
+                            # Wait for any context menu option to appear
+                            menu_items = WebDriverWait(self.driver, 5).until(
+                                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "span.css-108oj9l-SpanItemText"))
                             )
-                            print("Found Download video option, clicking...")
-                            actions.move_to_element(download_option).click().perform()
-                            print("Download initiated!")
-                            time.sleep(2)  # Wait for download to start
                             
-                            print("\nAttempting to create Airtable record...")
-                            # Create Airtable record
-                            record = self.airtable.create_record(video_id, description, uploader)
-                            if record:
-                                print("Airtable record created successfully!")
+                            # Find the Download video option
+                            download_option = None
+                            for item in menu_items:
+                                if item.text.strip().lower() == "download video":
+                                    download_option = item
+                                    break
+                                    
+                            if download_option:
+                                print("Found Download video option, clicking...")
+                                actions.move_to_element(download_option).click().perform()
+                                print("Download initiated!")
                             else:
-                                print("Failed to create Airtable record!")
+                                print("Download video option not found in context menu")
+                                # Create record with Failed status
+                                self.airtable.create_record(
+                                    video_id=video_id,
+                                    description=description if description else "No description available",
+                                    uploader=uploader,
+                                    status="Failed - No download option"
+                                )
+                                raise Exception("Download video option not found in context menu")
+                            
+                            # Wait for file to be downloaded (max 30 seconds)
+                            print("Waiting for file download...")
+                            start_time = time.time()
+                            while not download_handler.found_file and (time.time() - start_time) < 30:
+                                time.sleep(0.5)
+                            
+                            if download_handler.found_file:
+                                print(f"File downloaded: {download_handler.found_file}")
+                                # Create Airtable record with file
+                                self.airtable.create_record(
+                                    video_id, 
+                                    description if description else "No description available", 
+                                    uploader, 
+                                    status="Downloaded",
+                                    video_file=download_handler.found_file
+                                )
+                            else:
+                                print("File download not detected")
+                                self.airtable.create_record(
+                                    video_id, 
+                                    description if description else "No description available", 
+                                    uploader, 
+                                    status="Failed"
+                                )
+                            
+                            # Stop file monitoring
+                            observer.stop()
+                            observer.join()
                             
                         except Exception as e:
-                            print(f"Error in download process: {str(e)}")
-                            print("\nAttempting to create failed record in Airtable...")
-                            # Log failed download in Airtable
-                            record = self.airtable.create_record(video_id, description, uploader, status="Failed")
-                            if record:
-                                print("Failed status recorded in Airtable")
-                            else:
-                                print("Could not record failed status in Airtable")
+                            print(f"\nError during download process: {str(e)}")
+                            # Create record with Failed status if not already created
+                            if "Download video option not found" not in str(e):
+                                self.airtable.create_record(
+                                    video_id=video_id,
+                                    description=description if description else "No description available",
+                                    uploader=uploader,
+                                    status=f"Failed - {str(e)}"
+                                )
+                            
+                            # Make sure to stop the observer if it exists
+                            try:
+                                observer.stop()
+                                observer.join()
+                            except:
+                                pass
                         
                         print("\nClosing video tab...")
                         # Close the tab and switch back
@@ -330,7 +525,12 @@ class TikTokDownloader:
         try:
             # Navigate to your profile page first
             print("\nNavigating to your profile page...")
-            self.driver.get('https://www.tiktok.com/@dysonsmear')
+            tiktok_username = os.getenv("TIKTOK_USERNAME")
+            if not tiktok_username:
+                print("ERROR: TIKTOK_USERNAME not set in .env file!")
+                return
+                
+            self.driver.get(f'https://www.tiktok.com/@{tiktok_username}')
             time.sleep(3)
             
             # Wait for user to log in

@@ -62,6 +62,52 @@ pip install -r requirements.txt
    - Find the line with `@dysonsmear` and replace it with your TikTok username
    - Example: If your profile is at `tiktok.com/@your_name`, change it to `@your_name`
 
+## Setup Instructions
+
+### 1. Install Dependencies
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Environment Variables
+Create a `.env` file in the project root with the following variables:
+```env
+AIRTABLE_BASE_ID=your_base_id
+AIRTABLE_ACCESS_TOKEN_VALUE=your_token
+AIRTABLE_TABLE_NAME=your_table_name
+TIKTOK_USERNAME=your_tiktok_username
+DOWNLOAD_DIR=your_download_directory
+```
+
+### 3. Google Drive Setup
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project or select an existing one
+3. Enable the Google Drive API:
+   - Go to "APIs & Services" > "Library"
+   - Search for "Google Drive API"
+   - Click "Enable"
+4. Configure OAuth consent screen:
+   - Go to "APIs & Services" > "OAuth consent screen"
+   - Choose "External" user type
+   - Fill in the required information
+   - Add your email as a test user
+5. Create credentials:
+   - Go to "APIs & Services" > "Credentials"
+   - Click "Create Credentials" > "OAuth client ID"
+   - Choose "Desktop application"
+   - Download the credentials file
+   - Save it as `credentials.json` in the project root
+
+### 4. Airtable Setup
+1. Create a new base in Airtable
+2. Create a table with the following fields:
+   - Video ID (Single line text)
+   - Description (Long text)
+   - Uploader (Single line text)
+   - Status (Single select: Downloaded, Failed)
+   - Video File (Attachment)
+3. Get your Base ID and API key from Airtable
+
 ## Usage
 
 1. Close all Chrome windows
