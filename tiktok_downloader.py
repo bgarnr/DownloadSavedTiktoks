@@ -10,12 +10,58 @@ from dotenv import load_dotenv
 import sys
 import setup_chromedriver
 from selenium.webdriver.common.keys import Keys
+from pyairtable import Table
+
+class AirtableManager:
+    def __init__(self):
+        """Initialize Airtable connection"""
+        self.base_id = os.getenv("AIRTABLE_BASE_ID")
+        self.token = os.getenv("AIRTABLE_ACCESS_TOKEN_VALUE")
+        self.table_name = os.getenv("AIRTABLE_TABLE_NAME")
+        
+        print(f"\nInitializing Airtable connection...")
+        print(f"Base ID: {self.base_id}")
+        print(f"Token available: {'Yes' if self.token else 'No'}")
+        print(f"Table name: {self.table_name}")
+        
+        if not self.base_id or not self.token:
+            print("ERROR: Missing Airtable credentials in .env file!")
+            return
+            
+        try:
+            self.table = Table(self.token, self.base_id, self.table_name)
+            print("Successfully connected to Airtable!")
+        except Exception as e:
+            print(f"Error connecting to Airtable: {str(e)}")
+    
+    def create_record(self, video_id, description, uploader, status="Downloaded"):
+        """Create a record in Airtable for a downloaded video"""
+        try:
+            print(f"\nCreating Airtable record...")
+            print(f"Video ID: {video_id}")
+            print(f"Uploader: {uploader}")
+            print(f"Description length: {len(description)} chars")
+            print(f"Status: {status}")
+            
+            record = self.table.create({
+                "Video Id": video_id,
+                "Description": description,
+                "Uploader": uploader,
+                "Status": status
+            })
+            print(f"Successfully created Airtable record for video {video_id}")
+            return record
+        except Exception as e:
+            print(f"Error creating Airtable record: {str(e)}")
+            print(f"Full error details: {repr(e)}")
+            return None
 
 class TikTokDownloader:
     def __init__(self, profile_name=None):
         """Initialize the TikTok downloader with optional profile name"""
         self.profile_name = profile_name
         self.driver = None
+        self.airtable = AirtableManager()
         self.setup_driver()
         
     def setup_driver(self):
@@ -186,15 +232,40 @@ class TikTokDownloader:
                     # Check if there's a new URL to process
                     url = self.driver.execute_script("const url = window.lastOpenedUrl; window.lastOpenedUrl = null; return url;")
                     if url:
-                        print(f"\nProcessing download for: {url}")
-                        # Switch to the new tab (it should be the last one)
+                        print("\n" + "="*50)
+                        print("DOWNLOAD PROCESS STARTED")
+                        print("="*50)
+                        print(f"Processing URL: {url}")
+                        
+                        # Extract video information
+                        try:
+                            video_id = url.split('/')[-1]
+                            uploader = url.split('/@')[1].split('/')[0]
+                            print(f"Extracted video ID: {video_id}")
+                            print(f"Extracted uploader: {uploader}")
+                        except Exception as e:
+                            print(f"Error extracting video info: {str(e)}")
+                        
+                        # Get video description if available
+                        try:
+                            print("Attempting to get video description...")
+                            description = self.driver.find_element(By.CSS_SELECTOR, ".css-j2a19r-SpanText").text
+                            print(f"Found description: {description[:100]}...")
+                        except Exception as e:
+                            print(f"Error getting description: {str(e)}")
+                            description = "No description available"
+                        
+                        print("\nStarting download process...")
+                        # Switch to the new tab
                         self.driver.switch_to.window(self.driver.window_handles[-1])
                         
                         try:
                             # Wait for video element to be present
+                            print("Waiting for video element...")
                             video = WebDriverWait(self.driver, 10).until(
                                 EC.presence_of_element_located((By.TAG_NAME, "video"))
                             )
+                            print("Video element found!")
                             
                             # Create ActionChains instance
                             actions = ActionChains(self.driver)
@@ -205,7 +276,7 @@ class TikTokDownloader:
                             time.sleep(1)  # Wait for context menu
                             
                             # Click the Download video option
-                            print("Looking for Download video option...")
+                            print("Looking for Download option...")
                             download_option = WebDriverWait(self.driver, 5).until(
                                 EC.element_to_be_clickable((By.CSS_SELECTOR, "span.css-108oj9l-SpanItemText"))
                             )
@@ -214,12 +285,30 @@ class TikTokDownloader:
                             print("Download initiated!")
                             time.sleep(2)  # Wait for download to start
                             
+                            print("\nAttempting to create Airtable record...")
+                            # Create Airtable record
+                            record = self.airtable.create_record(video_id, description, uploader)
+                            if record:
+                                print("Airtable record created successfully!")
+                            else:
+                                print("Failed to create Airtable record!")
+                            
                         except Exception as e:
-                            print(f"Error triggering download: {str(e)}")
+                            print(f"Error in download process: {str(e)}")
+                            print("\nAttempting to create failed record in Airtable...")
+                            # Log failed download in Airtable
+                            record = self.airtable.create_record(video_id, description, uploader, status="Failed")
+                            if record:
+                                print("Failed status recorded in Airtable")
+                            else:
+                                print("Could not record failed status in Airtable")
                         
+                        print("\nClosing video tab...")
                         # Close the tab and switch back
                         self.driver.close()
                         self.driver.switch_to.window(self.driver.window_handles[0])
+                        print("Download process complete!")
+                        print("="*50 + "\n")
                     
                     time.sleep(1)  # Check every second
                     

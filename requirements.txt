@@ -1,5 +1,7 @@
+selenium==4.15.2
+undetected-chromedriver==3.5.4
 undetected-chromedriver==3.5.4
 selenium==4.15.2
 requests==2.31.0
-python-dotenv==1.0.0
+pyairtable==2.2.0
 fake-useragent==1.4.0
