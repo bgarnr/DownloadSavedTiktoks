@@ -40,5 +40,17 @@ def download_chromedriver():
         print(f"Error downloading ChromeDriver: {str(e)}")
         sys.exit(1)
 
+def get_chrome_path():
+    """Get the path to Chrome executable"""
+    chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+    if not os.path.exists(chrome_path):
+        raise Exception("Chrome not found in default location!")
+    return chrome_path
+
+def get_user_data_dir():
+    """Get the Chrome user data directory"""
+    user_data_dir = os.path.join(os.environ['LOCALAPPDATA'], 'Google', 'Chrome', 'User Data')
+    return os.path.normpath(user_data_dir)
+
 if __name__ == "__main__":
     download_chromedriver()

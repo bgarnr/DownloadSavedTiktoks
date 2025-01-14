@@ -8,54 +8,41 @@ import time
 import requests
 from dotenv import load_dotenv
 import sys
+import setup_chromedriver
 
 class TikTokDownloader:
-    def __init__(self):
-        load_dotenv()
+    def __init__(self, profile_name=None):
+        """Initialize the TikTok downloader with optional profile name"""
+        self.profile_name = profile_name
         self.driver = None
         self.setup_driver()
         
     def setup_driver(self):
+        """Setup Chrome driver with the specified profile"""
+        print("\nSetting up Chrome driver...")
+        
         try:
-            print("Setting up Chrome driver...")
+            # Get Chrome path
+            chrome_path = setup_chromedriver.get_chrome_path()
+            print(f"Using Chrome from: {chrome_path}")
             
-            options = uc.ChromeOptions()
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-gpu')
-            options.add_argument('--disable-software-rasterizer')
-            
-            # Set Chrome binary location explicitly
-            chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-            if os.path.exists(chrome_path):
-                print(f"Using Chrome from: {chrome_path}")
-                options.binary_location = chrome_path
-            else:
-                print("Chrome not found in default location!")
-                print("Please make sure Chrome is installed in the default location.")
-                raise Exception("Chrome not found")
-            
-            # Use your default Chrome profile
-            user_data_dir = os.path.join(os.environ['LOCALAPPDATA'], 'Google', 'Chrome', 'User Data')
-            user_data_dir = os.path.normpath(user_data_dir)  # Normalize path
+            # Get user data directory
+            user_data_dir = setup_chromedriver.get_user_data_dir()
             print(f"Using Chrome profile from: {user_data_dir}")
             
-            # Add the user data directory option
-            options.add_argument(f'--user-data-dir={user_data_dir}')
-            options.add_argument('--profile-directory=Default')
+            # Setup Chrome options
+            options = uc.ChromeOptions()
+            options.add_argument(f"--user-data-dir={user_data_dir}")
+            if self.profile_name:
+                options.add_argument(f"--profile-directory={self.profile_name}")
+                print(f"Using profile: {self.profile_name}")
             
-            # Create new Chrome instance
             print("Creating Chrome instance...")
-            self.driver = uc.Chrome(
-                options=options,
-                use_subprocess=True
-            )
-            self.driver.implicitly_wait(10)
+            self.driver = uc.Chrome(options=options)
             print("Chrome driver setup successful!")
             
         except Exception as e:
-            print("\nError setting up Chrome driver:")
-            print(f"Error details: {str(e)}")
+            print(f"\nError setting up Chrome driver: {str(e)}")
             print("\nPlease make sure:")
             print("1. Close ALL Chrome windows before running this script")
             print("2. Your antivirus is not blocking ChromeDriver")
@@ -64,7 +51,7 @@ class TikTokDownloader:
             if self.driver:
                 self.driver.quit()
             raise
-
+        
     def add_download_buttons(self):
         """Add download buttons to each video in the favorites list"""
         print("Waiting for videos to load...")
@@ -255,22 +242,37 @@ class TikTokDownloader:
                 except:
                     pass
 
-if __name__ == "__main__":
+def main():
+    """Main function to run the TikTok downloader"""
     print("TikTok Saved Videos Downloader")
     print("=============================")
-    print("This script will help you download your saved TikTok videos.")
-    print("\nIMPORTANT: Please make sure ALL Chrome windows are closed!")
-    print("Waiting 5 seconds before starting...")
-    time.sleep(5)
+    print("This script will help you download your saved TikTok videos.\n")
     
-    downloader = TikTokDownloader()
     try:
-        print("\nStarting interactive mode...")
+        # Load environment variables
+        load_dotenv()
+        
+        # Get profile from .env file, or use default
+        profile_name = os.getenv('CHROME_PROFILE')
+        if profile_name:
+            print(f"Using Chrome profile: {profile_name}")
+        else:
+            print("Using default Chrome profile")
+        
+        print("\nIMPORTANT: Please make sure ALL Chrome windows are closed!")
+        print("Waiting 5 seconds before starting...")
+        time.sleep(5)
+        
+        # Initialize downloader with profile
+        downloader = TikTokDownloader(profile_name)
         downloader.browse_favorites()
-        print("\nDownload complete! Check the 'downloads' folder for your videos.")
+        
+    except KeyboardInterrupt:
+        print("\n\nScript interrupted by user.")
     except Exception as e:
         print(f"\nAn error occurred: {str(e)}")
-        if downloader.driver:
-            downloader.driver.quit()
     finally:
         print("\nScript finished. Thanks for using TikTok Saved Videos Downloader!")
+
+if __name__ == "__main__":
+    main()

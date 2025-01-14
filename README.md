@@ -5,6 +5,7 @@ A Python script to help download your favorite TikTok videos. The script adds do
 ## Features
 
 - Uses your existing Chrome profile (no need to log in again)
+- Supports multiple Chrome profiles (enter profile name when prompted)
 - Adds download buttons to your favorites page
 - Opens videos in new tabs for downloading
 - Visual feedback for downloaded videos
@@ -20,7 +21,7 @@ A Python script to help download your favorite TikTok videos. The script adds do
 
 1. Clone this repository:
 ```bash
-git clone [your-repo-url]
+git clone https://github.com/bgarnr/DownloadSavedTiktoks.git
 cd DownloadSavedTiktoks
 ```
 
@@ -36,9 +37,23 @@ pip install -r requirements.txt
 ```bash
 python tiktok_downloader.py
 ```
-3. Log in using the QR code if needed
-4. Click the download buttons on videos you want to save
-5. Use TikTok's native download button in the new tabs
+3. When prompted, enter your Chrome profile name or press Enter to use default
+4. Log in using the QR code if needed
+5. Click the download buttons on videos you want to save
+6. Use TikTok's native download button in the new tabs
+
+### Using Different Chrome Profiles
+
+If you have multiple Chrome profiles, you can specify which one to use when running the script. To find your profile name:
+
+1. Open Chrome and go to `chrome://version`
+2. Look for "Profile Path" - the last part of the path is your profile name
+3. Common profile names are:
+   - `Default` - The default Chrome profile
+   - `Profile 1`, `Profile 2`, etc. - Additional profiles
+   - Custom named profiles will show their name
+
+When running the script, enter this profile name when prompted.
 
 ## Note
 
