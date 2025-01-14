@@ -9,6 +9,7 @@ import requests
 from dotenv import load_dotenv
 import sys
 import setup_chromedriver
+from selenium.webdriver.common.keys import Keys
 
 class TikTokDownloader:
     def __init__(self, profile_name=None):
@@ -154,8 +155,10 @@ class TikTokDownloader:
                 const videoUrl = btn.getAttribute('data-video-url');
                 if (videoUrl) {
                     btn.textContent = 'Opening...';
-                    // Open in new tab
-                    window.open(videoUrl, '_blank');
+                    // Open in new tab and get the window handle
+                    const newWindow = window.open(videoUrl, '_blank');
+                    // Signal to Python that we've opened a new tab
+                    window.lastOpenedUrl = videoUrl;
                     btn.classList.add('downloaded');
                     btn.textContent = 'Downloaded';
                 }
@@ -171,6 +174,68 @@ class TikTokDownloader:
             }
         });
         """)
+        
+        # Start a background thread to handle downloads
+        self.start_download_handler()
+        
+    def start_download_handler(self):
+        """Start a background thread to handle automatic downloads"""
+        def check_for_downloads():
+            while True:
+                try:
+                    # Check if there's a new URL to process
+                    url = self.driver.execute_script("const url = window.lastOpenedUrl; window.lastOpenedUrl = null; return url;")
+                    if url:
+                        print(f"\nProcessing download for: {url}")
+                        # Switch to the new tab (it should be the last one)
+                        self.driver.switch_to.window(self.driver.window_handles[-1])
+                        
+                        try:
+                            # Wait for video element to be present
+                            video = WebDriverWait(self.driver, 10).until(
+                                EC.presence_of_element_located((By.TAG_NAME, "video"))
+                            )
+                            
+                            # Create ActionChains instance
+                            actions = ActionChains(self.driver)
+                            
+                            # Right click on the video element
+                            print("Right clicking video...")
+                            actions.context_click(video).perform()
+                            time.sleep(1)  # Wait for context menu
+                            
+                            # Click the Download video option
+                            print("Looking for Download video option...")
+                            download_option = WebDriverWait(self.driver, 5).until(
+                                EC.element_to_be_clickable((By.CSS_SELECTOR, "span.css-108oj9l-SpanItemText"))
+                            )
+                            print("Found Download video option, clicking...")
+                            actions.move_to_element(download_option).click().perform()
+                            print("Download initiated!")
+                            time.sleep(2)  # Wait for download to start
+                            
+                        except Exception as e:
+                            print(f"Error triggering download: {str(e)}")
+                        
+                        # Close the tab and switch back
+                        self.driver.close()
+                        self.driver.switch_to.window(self.driver.window_handles[0])
+                    
+                    time.sleep(1)  # Check every second
+                    
+                except Exception as e:
+                    print(f"Error in download handler: {str(e)}")
+                    # If the main window is closed, exit the thread
+                    try:
+                        self.driver.current_url
+                    except:
+                        break
+                    time.sleep(1)
+        
+        # Start the background thread
+        import threading
+        self.download_thread = threading.Thread(target=check_for_downloads, daemon=True)
+        self.download_thread.start()
 
     def browse_favorites(self):
         try:
