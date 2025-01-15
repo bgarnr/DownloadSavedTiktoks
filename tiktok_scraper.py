@@ -22,6 +22,7 @@ class TikTokScraper:
         self.airtable_manager = airtable_manager
         self.download_dir = os.getenv("DOWNLOAD_DIR")
         self.download_thread = None
+        self.favorites_window = None  # Store handle to favorites window
         
     def extract_video_id(self, url):
         """Extract the video ID from a TikTok URL."""
@@ -86,11 +87,11 @@ class TikTokScraper:
             print(f"Error clicking download button: {str(e)}")
             return False
             
-    def start_download_handler(self, video_id):
+    def start_download_handler(self, video_id, source_url):
         """Start monitoring for downloaded video file."""
         try:
             # Create download handler
-            handler = DownloadHandler(self.airtable_manager, video_id)
+            handler = DownloadHandler(self.airtable_manager, video_id, source_url)
             observer = Observer()
             observer.schedule(handler, self.download_dir, recursive=False)
             observer.start()
@@ -138,7 +139,7 @@ class TikTokScraper:
             uploader = self.get_uploader_info()
             
             # Start monitoring for downloads
-            handler, observer = self.start_download_handler(video_id)
+            handler, observer = self.start_download_handler(video_id, url)
             if not handler or not observer:
                 return False
                 
@@ -208,6 +209,7 @@ class TikTokScraper:
             try:
                 favorites.click()
                 print("Clicked favorites tab!")
+                self.favorites_window = self.driver.current_window_handle
             except Exception as e:
                 print(f"Error clicking favorites: {str(e)}")
                 return
@@ -389,7 +391,7 @@ class TikTokScraper:
                             # Switch to the new tab
                             self.driver.switch_to.window(self.driver.window_handles[-1])
                             time.sleep(3)  # Wait for page load
-                            
+                             
                             # Get video description if available
                             print("Attempting to get video description...")
                             try:
@@ -399,13 +401,13 @@ class TikTokScraper:
                             except:
                                 print("No description found")
                                 description = None
-                                
+                                 
                             # Set up file monitoring before starting download
-                            download_handler = DownloadHandler(self.airtable_manager, video_id)
+                            download_handler = DownloadHandler(self.airtable_manager, video_id, source_url=url)
                             observer = Observer()
                             observer.schedule(download_handler, self.download_dir, recursive=False)
                             observer.start()
-                            
+                             
                             try:
                                 # Wait for video element to be present
                                 print("Waiting for video element...")
@@ -413,21 +415,21 @@ class TikTokScraper:
                                     EC.presence_of_element_located((By.TAG_NAME, "video"))
                                 )
                                 print("Video element found!")
-                                
+                                 
                                 # Create ActionChains instance
                                 actions = ActionChains(self.driver)
-                                
+                                 
                                 # Right click on the video element
                                 print("Right clicking video...")
                                 actions.context_click(video).perform()
                                 time.sleep(1)  # Wait for context menu
-                                
+                                 
                                 # Click the Download video option
                                 print("Looking for Download option...")
                                 menu_items = WebDriverWait(self.driver, 5).until(
                                     EC.presence_of_all_elements_located((By.CSS_SELECTOR, "span.css-108oj9l-SpanItemText"))
                                 )
-                                
+                                 
                                 # Find the Download video option
                                 download_option = None
                                 for item in menu_items:
@@ -439,33 +441,81 @@ class TikTokScraper:
                                     print("Found Download option, clicking...")
                                     download_option.click()
                                     
-                                    # Wait for file to be downloaded
-                                    max_wait = 30  # Maximum seconds to wait
-                                    start_time = time.time()
-                                    
-                                    while time.time() - start_time < max_wait:
-                                        if download_handler.found_file:
-                                            print(f"\nDownload completed: {download_handler.found_file}")
+                                    # Wait for download to complete
+                                    print("\nWaiting for download to complete...")
+                                    timeout = 30
+                                    try:
+                                        while timeout > 0 and not download_handler.found_file:
+                                            print(f"Waiting... {timeout} seconds left")  # Debug print
+                                            time.sleep(1)
+                                            timeout -= 1
                                             
-                                            # Create Airtable record
+                                        if download_handler.found_file:
+                                            print(f"Download completed: {download_handler.found_file}")
+                                            print("Creating Airtable record...")  # Debug print
+                                            try:
+                                                print("Calling create_record...")  # Debug print
+                                                record = self.airtable_manager.create_record(
+                                                    video_id=video_id,
+                                                    description=description,
+                                                    uploader=uploader,
+                                                    video_file=download_handler.found_file,
+                                                    source_url=url
+                                                )
+                                                print(f"Create record returned: {record}")  # Debug print
+                                                if not record:
+                                                    raise Exception("create_record returned None")
+                                            except Exception as e:
+                                                print(f"Error creating Airtable record: {str(e)}")
+                                                print(f"Full error details: {repr(e)}")
+                                                raise
+                                        else:
+                                            print("Download timed out")
                                             self.airtable_manager.create_record(
                                                 video_id=video_id,
-                                                description=description,
-                                                uploader=uploader,  # Use extracted uploader
-                                                video_file=download_handler.found_file
+                                                status="Failed - Download timeout"
                                             )
-                                            break
-                                            
-                                        time.sleep(1)
+                                    except Exception as e:
+                                        print(f"Error during download wait: {str(e)}")
+                                        raise
+                                    finally:
+                                        print("Stopping observer...")  # Debug print
+                                        observer.stop()
+                                        observer.join()
+                                        print("Closing tab...")  # Debug print
                                         
-                                    if not download_handler.found_file:
-                                        print("\nDownload timeout")
-                                        self.airtable_manager.create_record(
-                                            video_id=video_id,
-                                            status="Failed - Download timeout"
-                                        )
+                                        # Get current window handle
+                                        current_handle = self.driver.current_window_handle
+                                        
+                                        # Switch to favorites window first
+                                        print("Switching to favorites window...")  # Debug print
+                                        self.driver.switch_to.window(self.favorites_window)
+                                        
+                                        # Then close the download tab
+                                        self.driver.switch_to.window(current_handle)
+                                        self.driver.close()
+                                        
+                                        # Switch back to favorites window
+                                        self.driver.switch_to.window(self.favorites_window)
+                                        print("Download process complete")  # Debug print
                                 else:
                                     print("Download option not found in context menu")
+                                    # Get current window handle and close it
+                                    current_handle = self.driver.current_window_handle
+                                    
+                                    # Switch to favorites window first
+                                    print("Switching to favorites window...")
+                                    self.driver.switch_to.window(self.favorites_window)
+                                    
+                                    # Then close the current tab
+                                    print("Closing tab since no download option found...")
+                                    self.driver.switch_to.window(current_handle)
+                                    self.driver.close()
+                                    
+                                    # Switch back to favorites window
+                                    self.driver.switch_to.window(self.favorites_window)
+                                    print("Returned to favorites")
+                                    
                                     raise Exception("Download video option not found")
                                     
                             except Exception as e:
@@ -474,22 +524,18 @@ class TikTokScraper:
                                     video_id=video_id,
                                     status=f"Failed - {str(e)}"
                                 )
-                                
+                                 
                             finally:
                                 observer.stop()
                                 observer.join()
-                                # Close the tab
-                                self.driver.close()
-                                # Switch back to main window
-                                self.driver.switch_to.window(self.driver.window_handles[0])
-                                
+                                 
                         except Exception as e:
                             print(f"\nError setting up download: {str(e)}")
                             self.airtable_manager.create_record(
                                 video_id=video_id,
                                 status=f"Failed - {str(e)}"
                             )
-                            
+                             
                     time.sleep(1)  # Check every second
                     
                 except Exception as e:
