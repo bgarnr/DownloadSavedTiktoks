@@ -236,7 +236,6 @@ class TikTokScraper:
     def add_download_buttons(self):
         """Add download buttons to each video in the favorites list"""
         print("Waiting for videos to load...")
-        # Wait for at least one video container to appear
         try:
             WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, 'div[class*="DivContainer-StyledDivContainerV2"]'))
@@ -244,62 +243,122 @@ class TikTokScraper:
         except Exception as e:
             print(f"Error waiting for videos: {str(e)}")
             return
-            
-        # Add button styles
-        print("Adding download button styles...")
-        self.driver.execute_script("""
-            var style = document.createElement('style');
-            style.innerHTML = `
-                .download-btn {
-                    position: absolute;
-                    top: 10px;
-                    right: 10px;
-                    background: rgba(0, 0, 0, 0.7);
-                    color: white;
-                    padding: 8px 15px;
-                    border: none;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    z-index: 9999;
-                    font-family: Arial, sans-serif;
-                    transition: background 0.3s;
+
+        # Inject CSS for download buttons
+        css = """
+        .download-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 8px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            z-index: 9999;
+            font-family: Arial, sans-serif;
+            transition: background 0.3s;
+        }
+        .download-btn:hover {
+            background: rgba(0, 0, 0, 0.9);
+        }
+        .download-btn.downloaded {
+            background: rgba(40, 167, 69, 0.7);
+        }
+        """
+        self.driver.execute_script(f"var style = document.createElement('style'); style.textContent = `{css}`; document.head.appendChild(style);")
+
+        # JavaScript to add download buttons and handle infinite scroll
+        js = """
+        // Global function to handle video downloads
+        window.downloadVideo = function(videoElement) {
+            const btn = videoElement.querySelector('.download-btn');
+            if (btn && !btn.classList.contains('downloaded')) {
+                const videoUrl = btn.getAttribute('data-video-url');
+                if (videoUrl) {
+                    btn.textContent = 'Opening...';
+                    // Open in new tab and signal to Python
+                    window.open(videoUrl, '_blank');
+                    window.lastOpenedUrl = videoUrl;
+                    btn.classList.add('downloaded');
+                    btn.textContent = 'Downloaded';
                 }
-                .download-btn:hover {
-                    background: rgba(0, 0, 0, 0.9);
-                }
-            `;
-            document.head.appendChild(style);
-        """)
+            }
+        };
         
-        # Add buttons to each video
-        print("Adding download buttons to videos...")
-        self.driver.execute_script("""
-            // Find all video containers on the favorites page only
-            const videoContainers = document.querySelectorAll('div[class*="DivContainer-StyledDivContainerV2"]');
+        // Global click handler for download buttons
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('download-btn')) {
+                const videoElement = e.target.closest('div[class*="DivContainer-StyledDivContainerV2"]');
+                if (videoElement) {
+                    downloadVideo(videoElement);
+                }
+            }
+        });
+
+        function addDownloadButtons() {
+            console.log('Looking for video containers...');
+            const videos = document.querySelectorAll('div[class*="DivContainer-StyledDivContainerV2"]');
+            console.log('Found ' + videos.length + ' video containers');
             
-            // Add button to each container
-            videoContainers.forEach((container) => {
-                // Create button if it doesn't exist
-                if (!container.querySelector('.download-btn')) {
+            videos.forEach((video, index) => {
+                if (!video.querySelector('.download-btn')) {
+                    console.log('Adding button to video ' + index);
                     const btn = document.createElement('button');
                     btn.className = 'download-btn';
                     btn.textContent = 'Download';
-                    btn.onclick = function(e) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        
-                        // Get the video link before navigating
-                        const videoLink = container.querySelector("a[href*='/video/']");
-                        if (videoLink) {
-                            window.lastOpenedUrl = videoLink.href;
-                            // Open in new tab
-                            window.open(videoLink.href, '_blank');
-                        }
-                    };
-                    container.appendChild(btn);
+                    btn.setAttribute('data-video-index', index);
+                    
+                    // Find the video link
+                    const videoLink = video.querySelector('a');
+                    if (videoLink) {
+                        console.log('Found video link: ' + videoLink.href);
+                        btn.setAttribute('data-video-url', videoLink.href);
+                    }
+                    
+                    video.style.position = 'relative';
+                    video.appendChild(btn);
                 }
             });
-        """)
+        }
+        
+        // Initial call
+        addDownloadButtons();
+        
+        // Setup observer to watch for new videos
+        const observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+                if (mutation.addedNodes.length) {
+                    addDownloadButtons();
+                }
+            });
+        });
+
+        // Start observing both potential containers
+        const itemContainer = document.querySelector('div[class*="DivItemContainer"]');
+        const mainContainer = document.querySelector('div[class*="DivContainer-StyledDivContainerV2"]')?.parentElement;
+        
+        if (itemContainer) {
+            observer.observe(itemContainer, { childList: true, subtree: true });
+            console.log('Observing DivItemContainer');
+        }
+        if (mainContainer) {
+            observer.observe(mainContainer, { childList: true, subtree: true });
+            console.log('Observing main container');
+        }
+        if (!itemContainer && !mainContainer) {
+            observer.observe(document.body, { childList: true, subtree: true });
+            console.log('Observing document body');
+        }
+        
+        // Also run periodically to catch any missed videos
+        setInterval(addDownloadButtons, 2000);
+        
+        console.log('Download button setup complete');
+        """
+        print("Adding download buttons to videos...")
+        self.driver.execute_script(js)
         
     def setup_download_handler(self):
         """Start background thread to handle downloads"""
@@ -317,6 +376,14 @@ class TikTokScraper:
                         # Extract video ID from URL
                         video_id = url.split('/')[-1].split('?')[0]
                         print(f"Video ID: {video_id}")
+                        
+                        # Extract uploader from URL
+                        try:
+                            uploader = url.split('/@')[1].split('/')[0]
+                            print(f"Extracted uploader: {uploader}")
+                        except Exception as e:
+                            print(f"Error extracting uploader: {str(e)}")
+                            uploader = None
                         
                         try:
                             # Switch to the new tab
@@ -384,7 +451,7 @@ class TikTokScraper:
                                             self.airtable_manager.create_record(
                                                 video_id=video_id,
                                                 description=description,
-                                                uploader=None,  # We'll get this from the URL
+                                                uploader=uploader,  # Use extracted uploader
                                                 video_file=download_handler.found_file
                                             )
                                             break
