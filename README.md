@@ -2,6 +2,21 @@
 
 A Python script to help download your favorite TikTok videos. The script adds download buttons to your favorites page and automatically handles the download process.
 
+## Project Structure
+
+The project is organized into several modules for better maintainability:
+
+### Core Files
+- `main.py` - Entry point of the application. Initializes components and starts the download process.
+- `browser_manager.py` - Handles Chrome browser setup and profile management using undetected-chromedriver.
+- `tiktok_scraper.py` - Core TikTok interaction logic, including video detection and download handling.
+- `airtable_manager.py` - Manages Airtable integration for tracking downloaded videos.
+
+Each module has a specific responsibility:
+- Browser Manager: Configures and manages Chrome instances with user profiles
+- TikTok Scraper: Handles all TikTok-specific operations (navigation, video detection, download buttons)
+- Airtable Manager: Creates and updates records for downloaded videos
+
 ## 👋 For Non-Technical Users
 
 This tool is designed to be user-friendly, even if you're not familiar with programming! We recommend:

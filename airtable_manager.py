@@ -15,27 +15,46 @@ class AirtableManager:
     
     def __init__(self):
         """Initialize Airtable connection"""
+        print("\nInitializing AirtableManager...")
+        
+        # Get environment variables
         self.base_id = os.getenv("AIRTABLE_BASE_ID")
         self.token = os.getenv("AIRTABLE_ACCESS_TOKEN_VALUE")
         self.table_name = os.getenv("AIRTABLE_TABLE_NAME")
+        
+        # Initialize other attributes
         self.http_server = None
         self.server_thread = None
         self.drive_manager = DriveManager()
+        self.table = None  # Initialize to None
         
-        print(f"\nInitializing Airtable connection...")
+        print(f"Environment variables loaded:")
         print(f"Base ID: {self.base_id}")
         print(f"Token available: {'Yes' if self.token else 'No'}")
         print(f"Table name: {self.table_name}")
         
-        if not self.base_id or not self.token:
-            print("ERROR: Missing Airtable credentials in .env file!")
-            return
+        # Validate environment variables
+        if not self.base_id:
+            raise ValueError("Missing AIRTABLE_BASE_ID in environment variables")
+        if not self.token:
+            raise ValueError("Missing AIRTABLE_ACCESS_TOKEN_VALUE in environment variables")
+        if not self.table_name:
+            raise ValueError("Missing AIRTABLE_TABLE_NAME in environment variables")
             
         try:
+            print("Attempting to connect to Airtable...")
             self.table = Table(self.token, self.base_id, self.table_name)
-            print("Successfully connected to Airtable!")
+            # Test the connection by trying to get one record
+            try:
+                self.table.first()
+                print("Successfully connected to Airtable!")
+            except Exception as e:
+                print(f"Failed to verify table connection: {str(e)}")
+                raise
         except Exception as e:
             print(f"Error connecting to Airtable: {str(e)}")
+            print(f"Full error details: {repr(e)}")
+            raise
 
     def start_temp_server(self, file_path):
         """Start a temporary HTTP server to serve the file"""
@@ -65,7 +84,7 @@ class AirtableManager:
             self.http_server = None
             self.server_thread = None
 
-    def create_record(self, video_id, description, uploader, status="Downloaded", video_file=None):
+    def create_record(self, video_id, description, uploader, status="Downloaded", video_file=None, source_url=None):
         """Create a record in Airtable for a downloaded video"""
         try:
             print(f"\nCreating Airtable record...")
@@ -74,43 +93,48 @@ class AirtableManager:
             print(f"Description: {description if description else 'No description available'}")
             print(f"Status: {status}")
             
+            from datetime import datetime
+            current_time = datetime.now().isoformat()
+            
             record_data = {
                 "Video Id": video_id,
                 "Description": description if description else "No description available",
                 "Uploader": uploader,
-                "Status": status
+                "Status": status,
+                "Date Uploaded": current_time
             }
             
-            # If we have a video file, prepare it for upload
+            if source_url:
+                record_data["Source Url"] = source_url
+            
+            # Create the record first (fast operation)
+            record = self.table.create(record_data)
+            print("Successfully created base Airtable record")
+            
+            # If we have a video file, upload it to Google Drive and update the record
             if video_file and os.path.exists(video_file):
-                print(f"Uploading video file: {video_file}")
-                file_size = os.path.getsize(video_file)
-                print(f"File size: {file_size} bytes")
-                
-                if file_size < 1000:  # Less than 1KB
-                    raise Exception(f"File seems too small ({file_size} bytes), might be corrupted or not fully downloaded")
-                
+                print(f"\nUploading video file: {video_file}")
                 try:
-                    # Upload to Google Drive first
-                    print("Uploading to Google Drive...")
+                    # Upload to Google Drive
                     shareable_link = self.drive_manager.upload_file(video_file)
                     
                     if shareable_link:
                         print(f"File uploaded to Drive: {shareable_link}")
-                        record_data["Video File"] = [{"url": shareable_link}]
+                        # Update Airtable record with video file
+                        self.table.update(record["id"], {
+                            "Video File": [{"url": shareable_link}]
+                        })
+                        print("Successfully updated record with video file")
                     else:
                         print("Failed to upload to Google Drive")
-
                 except Exception as e:
-                    raise e
+                    print(f"Error during video upload: {str(e)}")
+                    # Don't re-raise, let the record creation succeed
             
-            # Create the record with all data
-            record = self.table.create(record_data)
-            print("Successfully created Airtable record with all data")
             return record
             
         except Exception as e:
-            print(f"Error creating Airtable record: {str(e)}")
+            print(f"Error in create_record: {str(e)}")
             print(f"Full error details: {repr(e)}")
             return None
 
