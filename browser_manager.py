@@ -33,9 +33,11 @@ class BrowserManager:
         print("\nSetting up Chrome driver...")
         
         try:
-            # Get Chrome path
+            # Get Chrome path and version
             chrome_path = setup_chromedriver.get_chrome_path()
+            chrome_version = setup_chromedriver.get_chrome_version()
             print(f"Using Chrome from: {chrome_path}")
+            print(f"Using Chrome version: {chrome_version}")
             
             # Get user data directory
             user_data_dir = setup_chromedriver.get_user_data_dir()
@@ -49,7 +51,7 @@ class BrowserManager:
                 print(f"Using profile: {self.profile_name}")
             
             print("Creating Chrome instance...")
-            self.driver = uc.Chrome(options=options)
+            self.driver = uc.Chrome(options=options, version_main=chrome_version)
             print("Chrome driver setup successful!")
             
             return self.driver
